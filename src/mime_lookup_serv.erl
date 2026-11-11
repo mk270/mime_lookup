@@ -206,6 +206,16 @@ parse_mappings(Data) ->
     {ok, Mappings ++ [ [V, K] || {K, V} <- Additional ]}.
 
 
+strip_comment(S) when is_binary(S) ->
+    Result = string:split(S, <<"#">>, leading),
+    [Stripped|_] = Result,
+    Stripped.
+
+
+line_to_mapping(Line) when is_binary(Line) ->
+    string:lexemes(Line, " " ++ [$\t]).
+
+
 -spec install(Mappings) -> Result
               when Mappings :: [[binary()]],
                    Result   :: ok.
@@ -228,20 +238,12 @@ strip_comment_test_data() ->
      {<<"text/html  html htm">>, <<"text/html  html htm#optional">>}
     ].
 
-strip_comment(S) when is_binary(S) ->
-    Result = string:split(S, <<"#">>, leading),
-    [Stripped|_] = Result,
-    Stripped.
-
 line_to_mapping_test_data() ->
     [
      {[], <<"">>},
      {[<<"text/html">>, <<"html">>, <<"htm">>], <<"text/html html htm">>},
      {[<<"application/batch-SMTP">>], <<"application/batch-SMTP     ">>}
     ].
-
-line_to_mapping(Line) when is_binary(Line) ->
-    string:lexemes(Line, " " ++ [$\t]).
 
 store_mapping([]) -> ok; %ignored
 store_mapping([_Key]) -> ok; %ignored
