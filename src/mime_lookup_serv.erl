@@ -155,9 +155,7 @@ format_status(Status) ->
 
 -spec do_lookup(Extension) -> Result
               when Extension :: binary(),
-                   Result   :: {'ok', MimeType :: binary()}
-                               | 'notfound'.
-
+                   Result    :: {ok, MimeType :: binary()} | notfound.
 do_lookup(Extension) ->
     case ets:lookup(?MODULE, Extension) of
         [] -> notfound;
