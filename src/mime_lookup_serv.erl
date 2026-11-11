@@ -29,8 +29,9 @@
 -spec lookup(Extension) -> Result
               when Extension :: binary(),
                    Result    :: {ok, MimeType :: binary()} | notfound.
-lookup(MimeType) when is_binary(MimeType) ->
-    gen_server:call(?SERVER, {lookup, MimeType}).
+lookup(Extension) when is_binary(Extension) ->
+    gen_server:call(?SERVER, {lookup, Extension}).
+
 
 % Read the data again: the MIME types file and the extra mappings in the
 % application's environment. If they can't be read, the data already
@@ -87,13 +88,8 @@ init([]) ->
                             | {stop, Reason :: term(), NewState :: term()}.
 handle_call(reload, _From, State) ->
     {reply, load_data(), State};
-handle_call({lookup, MimeType}, _From, State) ->
-    Reply = case ets:lookup(?MODULE, MimeType) of
-                [] -> notfound;
-                [{_, MT}] -> {ok, MT};
-                [{_, MT}|_] -> {ok, MT} %oops
-            end,
-    {reply, Reply, State}.
+handle_call({lookup, Extension}, _From, State) ->
+    {reply, do_lookup(Extension), State}.
 
 
 -spec handle_cast(Request, State) -> Result
@@ -157,6 +153,19 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+-spec do_lookup(Extension) -> Result
+              when Extension :: binary(),
+                   Result   :: {'ok', MimeType :: binary()}
+                               | 'notfound'.
+
+do_lookup(Extension) ->
+    case ets:lookup(?MODULE, Extension) of
+        [] -> notfound;
+        [{_, MT}] -> {ok, MT};
+        [{_, MT}|_] -> {ok, MT} %oops
+    end.
+
 
 % (Re)build the table from the data file and the extra mappings in the
 % application's environment. The data is read and parsed first, so if that
