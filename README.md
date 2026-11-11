@@ -24,7 +24,7 @@ read when the application starts, and again whenever you call
 Add it to your `rebar.config`:
 
 ```erlang
-{deps, [{mime_lookup, "~> 0.3.1"}]}.
+{deps, [{mime_lookup, "~> 0.3"}]}.
 ```
 
 and list `mime_lookup` among the `applications` of your own application
@@ -43,8 +43,9 @@ and list `mime_lookup` among the `applications` of your own application
   so `<<"HTML">>` gives `notfound`. Lower-case it first if you need to.
 - Anything that is not a binary is a programming error and crashes the
   caller (`function_clause`).
-- If more than one type claims the same extension, one of them is
-  returned; which is not specified.
+- An extra mapping overrides the data file for its extension (see
+  below). If the data file itself gives one extension to several types,
+  one of them is returned; which is not specified.
 
 All lookups go through a single server process, so the application must be
 running.
@@ -55,7 +56,9 @@ running.
 `/etc/mime.types`). Each line is a MIME type followed by the extensions it
 is known by, separated by spaces or tabs. Anything after a `#` is a
 comment. A line that names no extension, including a blank line, maps
-nothing and is ignored.
+nothing and is ignored. Lines are split at `\n` only, so a file with
+DOS (CRLF) line endings would store its last extension on each line with
+a trailing carriage return; convert such a file first.
 
 ```
 # a comment
@@ -67,6 +70,14 @@ application/x-noext
 **Extra mappings**, in the `mime_types` setting: a list of
 `{Extension, MimeType}` pairs, which are added to the file's. The default
 adds `gemini` and `gmi` for `text/gemini`.
+
+**Extra mappings override the file.** If an extension has an extra
+mapping, `lookup/1` returns the extra mapping's type, whatever the data
+file says about that extension; other extensions on the same file line
+are unaffected. This holds after every reload. If the same extension
+appears more than once in `mime_types`, the first such pair in the list
+wins. Duplicates within the data file are the only case left
+unspecified.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -110,12 +121,18 @@ and you are told why:
 The other errors are `no_mime_types_path` (no data file configured) and
 `{bad_mime_types, Value}` (`mime_types` is not a list).
 
+The server also accepts a plain `reload` message, which does the same
+and logs a warning instead of returning the error:
+`mime_lookup_serv ! reload`. The data is never reloaded by itself; call
+`reload/0` after you change the file or the settings.
+
 ## Starting
 
 The data is loaded before the application finishes starting, so a lookup
 is possible the moment `application:start/1` returns. If the data cannot be
 loaded, the application does not start: the usual supervisor error comes
-back, with the reason (such as `{cannot_read, File, enoent}`) inside it.
+back, with the reason (such as `{cannot_read, File, enoent}`, inside a
+`badmatch`) buried in it, and a crash report is logged.
 
 ## Developing
 
@@ -123,7 +140,12 @@ back, with the reason (such as `{cannot_read, File, enoent}`) inside it.
 $ rebar3 compile
 $ rebar3 eunit
 $ rebar3 dialyzer
+$ rebar3 edoc
 ```
+
+`rebar3 edoc` writes the API documentation to `doc/`. The `{hex, [{doc,
+edoc}]}` entry in `rebar.config` makes `rebar3 hex publish` build and
+publish it with the package.
 
 ## Licence
 

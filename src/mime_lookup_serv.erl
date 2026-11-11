@@ -5,6 +5,17 @@
 %% This programme is free software; you may redistribute and/or modify it under
 %% the terms of the Apache Software Licence v2.0.
 
+%% @doc The server that owns the MIME type table.
+%%
+%% It is started by `mime_lookup_sup' and is not meant to be called
+%% directly: use the {@link mime_lookup} module. Every lookup is a call
+%% to this process, which is also the only one to write the ETS table,
+%% so a reload cannot be seen half-done.
+%%
+%% Besides the `reload' call, the server accepts a plain `reload'
+%% message (`Pid ! reload'), which does the same but only logs a
+%% warning on failure.
+%% @private
 -module(mime_lookup_serv).
 -include_lib("eunit/include/eunit.hrl").
 -behaviour(gen_server).
@@ -210,7 +221,7 @@ parse_mappings(Data) ->
     Stripped = [ strip_comment(S) || S <- Lines ],
     Mappings = [ M || {ok, M} <- [ line_to_mapping(S2) || S2 <- Stripped ] ],
     case additional_mappings() of
-        {ok, Additional} -> {ok, Mappings ++ Additional};
+        {ok, Additional} -> {ok, merge(Mappings, Additional)};
         {error, _} = Error -> Error
     end.
 
@@ -244,6 +255,37 @@ extra_mappings([Bad | _Rest], _Acc) ->
 extra_mappings(Other, _Acc) ->
     % the tail of an improper list
     {error, {bad_mime_types, Other}}.
+
+
+% The extra mappings override the data file: an extension that has an
+% extra mapping is dropped from the file's mappings (and a file mapping
+% left with no extension at all goes), so the table never holds two types
+% for it. If the extra mappings give one extension twice, the first one in
+% the list wins and the others are dropped. Duplicates within the data
+% file itself are not resolved here.
+-spec merge(FileMappings, Extra) -> Result
+              when FileMappings :: [mapping()],
+                   Extra        :: [mapping()],
+                   Result       :: [mapping()].
+merge(FileMappings, Extra) ->
+    {Kept, Overridden} = lists:foldl(fun keep_first/2, {[], #{}}, Extra),
+    Free = fun(E) -> not maps:is_key(E, Overridden) end,
+    [ {MT, Es2} || {MT, Es} <- FileMappings,
+                   Es2 <- [lists:filter(Free, Es)], Es2 =/= [] ]
+        ++ lists:reverse(Kept).
+
+
+-spec keep_first(Mapping, Acc) -> Result
+              when Mapping :: mapping(),
+                   Acc     :: {[mapping()], #{extension() => true}},
+                   Result  :: {[mapping()], #{extension() => true}}.
+keep_first({MT, Es}, {Kept, Seen}) ->
+    New = [ E || E <- lists:usort(Es), not maps:is_key(E, Seen) ],
+    case New of
+        [] -> {Kept, Seen};
+        _ -> {[{MT, New} | Kept],
+              lists:foldl(fun(E, M) -> M#{E => true} end, Seen, New)}
+    end.
 
 
 -spec strip_comment(Line) -> Result
@@ -449,6 +491,57 @@ reload_steps({Path, _OldPath, Pid}) ->
     [ ?assertEqual(ok, reload()) || _ <- lists:seq(1, 25) ],
     ?assertEqual(Pid, whereis(?SERVER)),
     ?assert(is_process_alive(Pid)).
+
+%% The extra mappings override the data file, whatever order the table
+%% hands them back in, and still do after a reload. The data file is a
+%% temporary one, so the real /etc/mime.types does not matter.
+override_test_() ->
+    {setup, fun reload_setup/0, fun reload_teardown/1,
+     fun(State) -> {timeout, 30, fun() -> override_steps(State) end} end}.
+
+override_steps({Path, _OldPath, Pid}) ->
+    OldExtra = application:get_env(mime_lookup, mime_types),
+    Write = fun(Text) -> ok = file:write_file(Path, Text) end,
+    Extra = fun(Pairs) ->
+                application:set_env(mime_lookup, mime_types, Pairs)
+            end,
+    Write(<<"text/html html htm\ntext/plain txt\n"
+            "text/x-gone gone\n">>),
+    Extra([{<<"html">>, <<"text/x-mine">>},
+           {<<"only">>, <<"text/x-only">>},
+           {<<"gone">>, <<"text/x-new">>}]),
+    ?assertEqual(ok, reload()),
+    % an extra mapping beats the file's, for that extension only
+    ?assertEqual({ok, <<"text/x-mine">>}, lookup(<<"html">>)),
+    ?assertEqual({ok, <<"text/html">>}, lookup(<<"htm">>)),
+    % file-only and extra-only extensions are as they were
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    ?assertEqual({ok, <<"text/x-only">>}, lookup(<<"only">>)),
+    ?assertEqual({ok, <<"text/x-new">>}, lookup(<<"gone">>)),
+    ?assertEqual(1, length(ets:lookup(?MODULE, <<"html">>))),
+    % the override survives reloads, by call and by message
+    ?assertEqual(ok, reload()),
+    ?assertEqual({ok, <<"text/x-mine">>}, lookup(<<"html">>)),
+    Write(<<"text/html html htm\ntext/plain txt\ntext/x-two html\n">>),
+    Pid ! reload,
+    ?assertEqual({ok, <<"text/x-mine">>}, lookup(<<"html">>)),
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    % an extension given twice in the extra mappings: the first wins
+    Extra([{<<"dup">>, <<"text/x-first">>},
+           {<<"dup">>, <<"text/x-second">>}]),
+    ?assertEqual(ok, reload()),
+    ?assertEqual({ok, <<"text/x-first">>}, lookup(<<"dup">>)),
+    ?assertEqual(1, length(ets:lookup(?MODULE, <<"dup">>))),
+    {ok, OldExtraValue} = OldExtra,
+    Extra(OldExtraValue).
+
+merge_test_() ->
+    [?_assertEqual([{<<"a">>, [<<"y">>]}, {<<"b">>, [<<"x">>]}],
+                   merge([{<<"a">>, [<<"x">>, <<"y">>]}],
+                         [{<<"b">>, [<<"x">>]}])),
+     % a file mapping with nothing left goes
+     ?_assertEqual([{<<"b">>, [<<"x">>]}],
+                   merge([{<<"a">>, [<<"x">>]}], [{<<"b">>, [<<"x">>]}]))].
 
 %% additional_mappings/0 and what parse_mappings/1 does with it: the
 %% extra mappings come out as mappings, like the lines of the data file,
