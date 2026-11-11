@@ -204,12 +204,18 @@ parse_mappings(Data) ->
     {ok, Mappings ++ [ [V, K] || {K, V} <- Additional ]}.
 
 
+-spec strip_comment(Line) -> Result
+              when Line   :: binary(),
+                   Result :: binary().
 strip_comment(S) when is_binary(S) ->
     Result = string:split(S, <<"#">>, leading),
     [Stripped|_] = Result,
     Stripped.
 
 
+-spec line_to_mapping(Line) -> Result
+              when Line   :: binary(),
+                   Result :: [binary()].
 line_to_mapping(Line) when is_binary(Line) ->
     string:lexemes(Line, " " ++ [$\t]).
 
