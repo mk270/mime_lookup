@@ -26,6 +26,9 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+-spec lookup(Extension) -> Result
+              when Extension :: binary(),
+                   Result    :: {ok, MimeType :: binary()} | notfound.
 lookup(MimeType) when is_binary(MimeType) ->
     gen_server:call(?SERVER, {lookup, MimeType}).
 
@@ -136,11 +139,16 @@ format_status(_Opt, Status) ->
 %%% Internal functions
 %%%===================================================================
 
+-spec load_data() -> Result
+              when Result :: ok.
 load_data() ->
     {ok, ConfigFile} = application:get_env(mime_lookup, mime_types_path),
     {ok, Data} = file:read_file(ConfigFile),
     ok = load_data(Data).
 
+-spec load_data(Data) -> Result
+              when Data   :: binary(),
+                   Result :: ok.
 load_data(Data) ->
     Lines = string:split(Data, <<"\n">>, all),
     ets:new(?MODULE, [bag, named_table]),
