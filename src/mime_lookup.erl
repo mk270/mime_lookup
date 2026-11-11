@@ -6,10 +6,15 @@
 %% the terms of the Apache Software Licence v2.0.
 
 -module(mime_lookup).
--export([lookup/1]).
+-export([lookup/1, reload/0]).
 
 -spec lookup(Extension) -> Result
               when Extension :: binary(),
                    Result    :: {ok, MimeType :: binary()} | notfound.
 lookup(Ext) ->
     mime_lookup_serv:lookup(Ext).
+
+-spec reload() -> Result
+              when Result :: ok | {error, Reason :: term()}.
+reload() ->
+    mime_lookup_serv:reload().

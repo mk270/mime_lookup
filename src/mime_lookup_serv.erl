@@ -13,7 +13,7 @@
 -export([start_link/0]).
 
 %% API
--export([lookup/1]).
+-export([lookup/1, reload/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -31,6 +31,14 @@
                    Result    :: {ok, MimeType :: binary()} | notfound.
 lookup(MimeType) when is_binary(MimeType) ->
     gen_server:call(?SERVER, {lookup, MimeType}).
+
+% Read the data again: the MIME types file and the extra mappings in the
+% application's environment. If they can't be read, the data already
+% loaded stays in use and the reason is returned.
+-spec reload() -> Result
+              when Result :: ok | {error, Reason :: term()}.
+reload() ->
+    gen_server:call(?SERVER, reload).
 
 
 -spec start_link() -> Result
@@ -77,6 +85,8 @@ init([]) ->
                             | {stop, Reason :: term(), Reply :: term(),
                                NewState :: term()}
                             | {stop, Reason :: term(), NewState :: term()}.
+handle_call(reload, _From, State) ->
+    {reply, load_data(), State};
 handle_call({lookup, MimeType}, _From, State) ->
     Reply = case ets:lookup(?MODULE, MimeType) of
                 [] -> notfound;
@@ -108,7 +118,12 @@ handle_cast(_Request, State) ->
                            | {stop, Reason :: normal | term(),
                               NewState :: term()}.
 handle_info(reload, State) ->
-    ok = load_data(),
+    case load_data() of
+        ok ->
+            ok;
+        {error, Reason} ->
+            logger:warning("mime_lookup: reload failed: ~p", [Reason])
+    end,
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -143,25 +158,50 @@ format_status(_Opt, Status) ->
 %%% Internal functions
 %%%===================================================================
 
+% (Re)build the table from the data file and the extra mappings in the
+% application's environment. The data is read and parsed first, so if that
+% fails the table is left as it was. The table is then emptied and refilled
+% by this process, which also answers every lookup, so no lookup can see it
+% half-built.
 -spec load_data() -> Result
-              when Result :: ok.
+              when Result :: ok | {error, Reason :: term()}.
 load_data() ->
-    {ok, ConfigFile} = application:get_env(mime_lookup, mime_types_path),
-    {ok, Data} = file:read_file(ConfigFile),
-    ok = load_data(Data).
+    case read_mappings() of
+        {ok, Mappings} -> install(Mappings);
+        {error, _} = Error -> Error
+    end.
 
 
--spec load_data(Data) -> Result
-              when Data   :: binary(),
-                   Result :: ok.
-load_data(Data) ->
-    Lines = string:split(Data, <<"\n">>, all),
-    ets:new(?MODULE, [bag, named_table]),
-    Stripped = [ strip_comment(S) || S <- Lines ],
-    Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
+-spec read_mappings() -> Result
+              when Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+read_mappings() ->
+    case application:get_env(mime_lookup, mime_types_path) of
+        {ok, ConfigFile} ->
+            case file:read_file(ConfigFile) of
+                {ok, Data} ->
+                    Lines = string:split(Data, <<"\n">>, all),
+                    Stripped = [ strip_comment(S) || S <- Lines ],
+                    Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
+                    Additional = application:get_env(mime_lookup,
+                                                     mime_types, []),
+                    {ok, Mappings ++ [ [V, K] || {K, V} <- Additional ]};
+                {error, Reason} ->
+                    {error, {cannot_read, ConfigFile, Reason}}
+            end;
+        undefined ->
+            {error, no_mime_types_path}
+    end.
+
+
+-spec install(Mappings) -> Result
+              when Mappings :: [[binary()]],
+                   Result   :: ok.
+install(Mappings) ->
+    case ets:whereis(?MODULE) of
+        undefined -> _ = ets:new(?MODULE, [bag, named_table]);
+        _ -> true = ets:delete_all_objects(?MODULE)
+    end,
     [ ok = store_mapping(M) || M <- Mappings ],
-    {ok, Additional} = application:get_env(mime_lookup, mime_types),
-    [ ok = store_mapping([V, K]) || {K, V} <- Additional],
     ok.
 
 %%%===================================================================
@@ -245,3 +285,82 @@ ready_after_start_link() ->
     ?assertEqual({ok, <<"text/gemini">>}, lookup(<<"gemini">>)),
     ?assertEqual(notfound, lookup(<<"no-such-extension">>)),
     ok = gen_server:stop(Pid).
+
+%% reload/0 reads the data again: new mappings appear, removed ones go,
+%% nothing is duplicated, the extra mappings from the environment stay, a
+%% failed reload keeps the old data, and the server is not disturbed (it
+%% used to crash, since the table already existed). The server is started
+%% by hand here, on a data file the test writes.
+reload_test_() ->
+    {setup, fun reload_setup/0, fun reload_teardown/1,
+     fun(State) -> {timeout, 30, fun() -> reload_steps(State) end} end}.
+
+reload_setup() ->
+    % the server is linked to this process: trapping exits turns a crash of
+    % the server into a failed test, instead of killing the test before it
+    % can clean up
+    process_flag(trap_exit, true),
+    _ = application:load(mime_lookup),
+    Unique = integer_to_list(erlang:unique_integer([positive])),
+    Path = filename:absname("mime_lookup_reload_" ++ Unique ++ ".types"),
+    ok = file:write_file(Path, <<"text/html html\n">>),
+    OldPath = application:get_env(mime_lookup, mime_types_path),
+    ok = application:set_env(mime_lookup, mime_types_path, Path),
+    {ok, Pid} = start_link(),
+    {Path, OldPath, Pid}.
+
+% Cleans up even if the test failed and took the server down with it.
+reload_teardown({Path, OldPath, Pid}) ->
+    _ = file:delete(Path),
+    case OldPath of
+        {ok, Old} -> application:set_env(mime_lookup, mime_types_path, Old);
+        undefined -> application:unset_env(mime_lookup, mime_types_path)
+    end,
+    case is_process_alive(Pid) of
+        true -> ok = gen_server:stop(Pid);
+        false -> ok
+    end.
+
+reload_steps({Path, _OldPath, Pid}) ->
+    Write = fun(Text) -> ok = file:write_file(Path, Text) end,
+    Count = fun(Ext) -> length(ets:lookup(?MODULE, Ext)) end,
+    % to begin with
+    ?assertEqual({ok, <<"text/html">>}, lookup(<<"html">>)),
+    ?assertEqual(notfound, lookup(<<"htm">>)),
+    ?assertEqual({ok, <<"text/gemini">>}, lookup(<<"gemini">>)),
+    % a new mapping appears, an unchanged one is not duplicated, and the
+    % extra mappings from the environment are still there
+    Write(<<"text/html html htm\ntext/plain txt\n">>),
+    ?assertEqual(ok, mime_lookup:reload()),
+    ?assertEqual({ok, <<"text/html">>}, lookup(<<"htm">>)),
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    ?assertEqual({ok, <<"text/gemini">>}, lookup(<<"gemini">>)),
+    ?assertEqual(ok, reload()),
+    ?assertEqual(ok, reload()),
+    ?assertEqual(1, Count(<<"html">>)),
+    ?assertEqual(1, Count(<<"gemini">>)),
+    % a mapping removed from the file is gone after a reload
+    Write(<<"text/plain txt\n">>),
+    ?assertEqual(ok, reload()),
+    ?assertEqual(notfound, lookup(<<"html">>)),
+    ?assertEqual(notfound, lookup(<<"htm">>)),
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    % a file that can't be read keeps the data already loaded
+    application:set_env(mime_lookup, mime_types_path, Path ++ ".missing"),
+    ?assertMatch({error, {cannot_read, _, enoent}}, reload()),
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    ?assertEqual({ok, <<"text/gemini">>}, lookup(<<"gemini">>)),
+    % as does having no file configured
+    application:unset_env(mime_lookup, mime_types_path),
+    ?assertEqual({error, no_mime_types_path}, reload()),
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    application:set_env(mime_lookup, mime_types_path, Path),
+    % the plain message does the same job, and lookups sent after it see
+    % the result
+    Write(<<"text/plain txt\ntext/x-new newext\n">>),
+    Pid ! reload,
+    ?assertEqual({ok, <<"text/x-new">>}, lookup(<<"newext">>)),
+    % and none of this disturbs the server
+    [ ?assertEqual(ok, reload()) || _ <- lists:seq(1, 25) ],
+    ?assertEqual(Pid, whereis(?SERVER)),
+    ?assert(is_process_alive(Pid)).
