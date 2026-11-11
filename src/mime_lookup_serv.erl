@@ -220,6 +220,8 @@ line_to_mapping(Line) when is_binary(Line) ->
     string:lexemes(Line, " " ++ [$\t]).
 
 
+% updating our cache of the data ...
+
 -spec install(Mappings) -> Result
               when Mappings :: [[binary()]],
                    Result   :: ok.
@@ -230,6 +232,14 @@ install(Mappings) ->
     end,
     [ ok = store_mapping(M) || M <- Mappings ],
     ok.
+
+
+store_mapping([]) -> ok; %ignored
+store_mapping([_Key]) -> ok; %ignored
+store_mapping([Key|Values]) ->
+    [ ets:insert(?MODULE, [{V, Key}]) || V <- Values],
+    ok.
+
 
 %%%===================================================================
 %%% Testing
@@ -248,12 +258,6 @@ line_to_mapping_test_data() ->
      {[<<"text/html">>, <<"html">>, <<"htm">>], <<"text/html html htm">>},
      {[<<"application/batch-SMTP">>], <<"application/batch-SMTP     ">>}
     ].
-
-store_mapping([]) -> ok; %ignored
-store_mapping([_Key]) -> ok; %ignored
-store_mapping([Key|Values]) ->
-    [ ets:insert(?MODULE, [{V, Key}]) || V <- Values],
-    ok.
 
 strip_comment_test_() ->
     [ ?_assertEqual(Expected, strip_comment(Observed)) ||
