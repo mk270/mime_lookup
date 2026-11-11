@@ -46,9 +46,13 @@ start_link() ->
                               {stop, Reason :: term()} |
                               ignore.
 init([]) ->
-    proc_lib:init_ack({ok, self()}),
+    % The server is ready when start_link/0 returns: the data is loaded and
+    % the name is registered before this process says it has started, so
+    % a caller can look something up the moment the application is up. If
+    % loading fails, start_link/0 returns the error.
     ok = load_data(),
     register(?SERVER, self()),
+    proc_lib:init_ack({ok, self()}),
     gen_server:enter_loop(?MODULE, [], #state{}).
 
 
@@ -110,7 +114,7 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 
 load_data() ->
-    {ok, ConfigFile} = application:get_env(mime_types_path),
+    {ok, ConfigFile} = application:get_env(mime_lookup, mime_types_path),
     {ok, Data} = file:read_file(ConfigFile),
     ok = load_data(Data).
 
@@ -120,7 +124,7 @@ load_data(Data) ->
     Stripped = [ strip_comment(S) || S <- Lines ],
     Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
     [ ok = store_mapping(M) || M <- Mappings ],
-    {ok, Additional} = application:get_env(mime_types),
+    {ok, Additional} = application:get_env(mime_lookup, mime_types),
     [ ok = store_mapping([V, K]) || {K, V} <- Additional],
     ok.
 
@@ -159,3 +163,45 @@ strip_comment_test_() ->
 line_to_mapping_test_() ->
     [ ?_assertEqual(Expected, line_to_mapping(Observed)) ||
         {Expected, Observed} <- line_to_mapping_test_data() ].
+
+%% start_link/0 must not return until the server is ready: data loaded
+%% and name registered. A caller that starts the application and at
+%% once looks something up would otherwise sometimes get noproc.
+%% The data file is written here, so the test doesn't depend on the
+%% system's /etc/mime.types; the extra mappings come from the app's env.
+start_link_returns_a_ready_server_test_() ->
+    {setup,
+     fun() ->
+         _ = application:load(mime_lookup),
+         Unique = integer_to_list(erlang:unique_integer([positive])),
+         Path = filename:absname("mime_lookup_test_" ++ Unique ++ ".types"),
+         ok = file:write_file(Path, <<"# a comment\ntext/html html htm\n">>),
+         OldPath = application:get_env(mime_lookup, mime_types_path),
+         ok = application:set_env(mime_lookup, mime_types_path, Path),
+         {Path, OldPath}
+     end,
+     fun({Path, OldPath}) ->
+         ok = file:delete(Path),
+         case OldPath of
+             {ok, Old} -> application:set_env(mime_lookup,
+                                              mime_types_path, Old);
+             undefined -> application:unset_env(mime_lookup,
+                                                mime_types_path)
+         end
+     end,
+     fun(_) ->
+         {timeout, 30,
+          fun() ->
+              % many times over, since the failure was a race
+              [ ready_after_start_link() || _ <- lists:seq(1, 50) ]
+          end}
+     end}.
+
+ready_after_start_link() ->
+    {ok, Pid} = start_link(),
+    ?assertEqual(Pid, whereis(?SERVER)),
+    ?assertEqual({ok, <<"text/html">>}, lookup(<<"html">>)),
+    ?assertEqual({ok, <<"text/html">>}, lookup(<<"htm">>)),
+    ?assertEqual({ok, <<"text/gemini">>}, lookup(<<"gemini">>)),
+    ?assertEqual(notfound, lookup(<<"no-such-extension">>)),
+    ok = gen_server:stop(Pid).
