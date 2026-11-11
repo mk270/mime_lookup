@@ -23,6 +23,16 @@
 
 -record(state, {}).
 
+% A MIME type and the extensions it is known by: one line of the data file,
+% such as "text/html html htm", or one extra mapping from the application's
+% environment. There is at least one extension, since a type without one
+% could never be looked up. (The environment writes its pairs the other way
+% round, {Extension, MimeType}, and the table holds one {Extension,
+% MimeType} object per extension.)
+-type mime_type() :: binary().
+-type extension() :: binary().
+-type mapping()   :: {mime_type(), [extension(), ...]}.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -179,7 +189,7 @@ load_data() ->
 
 
 -spec read_mappings() -> Result
-              when Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+              when Result :: {ok, [mapping()]} | {error, Reason :: term()}.
 read_mappings() ->
     case application:get_env(mime_lookup, mime_types_path) of
         {ok, ConfigFile} ->
@@ -194,11 +204,11 @@ read_mappings() ->
 
 -spec parse_mappings(Data) -> Result
               when Data   :: binary(),
-                   Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+                   Result :: {ok, [mapping()]} | {error, Reason :: term()}.
 parse_mappings(Data) ->
     Lines = string:split(Data, <<"\n">>, all),
     Stripped = [ strip_comment(S) || S <- Lines ],
-    Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
+    Mappings = [ M || {ok, M} <- [ line_to_mapping(S2) || S2 <- Stripped ] ],
     case additional_mappings() of
         {ok, Additional} -> {ok, Mappings ++ Additional};
         {error, _} = Error -> Error
@@ -206,13 +216,12 @@ parse_mappings(Data) ->
 
 
 % The extra mappings in the application's environment (the `mime_types`
-% key: a list of {Extension, MimeType} pairs), as [MimeType, Extension]
-% lists, which is the shape of a line of the data file. Each extension
-% and MIME type must be a non-empty binary, and the value a proper list;
-% anything else is an error, not silently dropped or stored, since a
-% mapping with the wrong types could never be found.
+% key: a list of {Extension, MimeType} pairs), one mapping for each pair.
+% Each extension and MIME type must be a non-empty binary, and the value a
+% proper list; anything else is an error, not silently dropped or stored,
+% since a mapping with the wrong types could never be found.
 -spec additional_mappings() -> Result
-              when Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+              when Result :: {ok, [mapping()]} | {error, Reason :: term()}.
 additional_mappings() ->
     case application:get_env(mime_lookup, mime_types, []) of
         Pairs when is_list(Pairs) -> extra_mappings(Pairs, []);
@@ -222,14 +231,14 @@ additional_mappings() ->
 
 -spec extra_mappings(Pairs, Acc) -> Result
               when Pairs  :: term(),
-                   Acc    :: [[binary()]],
-                   Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+                   Acc    :: [mapping()],
+                   Result :: {ok, [mapping()]} | {error, Reason :: term()}.
 extra_mappings([], Acc) ->
     {ok, lists:reverse(Acc)};
 extra_mappings([{Extension, MimeType} | Rest], Acc)
   when is_binary(Extension), Extension =/= <<>>,
        is_binary(MimeType), MimeType =/= <<>> ->
-    extra_mappings(Rest, [[MimeType, Extension] | Acc]);
+    extra_mappings(Rest, [{MimeType, [Extension]} | Acc]);
 extra_mappings([Bad | _Rest], _Acc) ->
     {error, {bad_extra_mapping, Bad}};
 extra_mappings(Other, _Acc) ->
@@ -246,17 +255,23 @@ strip_comment(S) when is_binary(S) ->
     Stripped.
 
 
+% A line of the data file: a MIME type followed by the extensions it is
+% known by. A line that names no extension, such as a blank one, maps
+% nothing, so there is no mapping to return.
 -spec line_to_mapping(Line) -> Result
               when Line   :: binary(),
-                   Result :: [binary()].
+                   Result :: {ok, mapping()} | ignore.
 line_to_mapping(Line) when is_binary(Line) ->
-    string:lexemes(Line, " " ++ [$\t]).
+    case string:lexemes(Line, " " ++ [$\t]) of
+        [MimeType | [_ | _] = Extensions] -> {ok, {MimeType, Extensions}};
+        _ -> ignore
+    end.
 
 
 % updating our cache of the data ...
 
 -spec install(Mappings) -> Result
-              when Mappings :: [[binary()]],
+              when Mappings :: [mapping()],
                    Result   :: ok.
 install(Mappings) ->
     case ets:whereis(?MODULE) of
@@ -268,12 +283,10 @@ install(Mappings) ->
 
 
 -spec store_mapping(Mapping) -> Result
-              when Mapping :: [binary()],
+              when Mapping :: mapping(),
                    Result  :: ok.
-store_mapping([]) -> ok; %ignored
-store_mapping([_Key]) -> ok; %ignored
-store_mapping([Key|Values]) ->
-    [ ets:insert(?MODULE, [{V, Key}]) || V <- Values],
+store_mapping({MimeType, Extensions}) ->
+    [ ets:insert(?MODULE, [{E, MimeType}]) || E <- Extensions ],
     ok.
 
 
@@ -290,9 +303,14 @@ strip_comment_test_data() ->
 
 line_to_mapping_test_data() ->
     [
-     {[], <<"">>},
-     {[<<"text/html">>, <<"html">>, <<"htm">>], <<"text/html html htm">>},
-     {[<<"application/batch-SMTP">>], <<"application/batch-SMTP     ">>}
+     {ignore, <<"">>},
+     {{ok, {<<"text/html">>, [<<"html">>, <<"htm">>]}},
+      <<"text/html html htm">>},
+     % a type with no extension maps nothing
+     {ignore, <<"application/batch-SMTP     ">>},
+     {{ok, {<<"text/plain">>, [<<"txt">>]}}, <<"text/plain\ttxt">>},
+     {{ok, {<<"text/plain">>, [<<"txt">>, <<"text">>]}},
+      <<"  text/plain \t txt  text ">>}
     ].
 
 strip_comment_test_() ->
@@ -433,8 +451,8 @@ reload_steps({Path, _OldPath, Pid}) ->
     ?assert(is_process_alive(Pid)).
 
 %% additional_mappings/0 and what parse_mappings/1 does with it: the
-%% extra mappings come out in the shape of a line of the data file, and
-%% anything of the wrong type is an error.
+%% extra mappings come out as mappings, like the lines of the data file,
+%% and anything of the wrong type is an error.
 additional_mappings_test_() ->
     {setup,
      fun() ->
@@ -454,11 +472,11 @@ additional_mappings_test_() ->
                     additional_mappings()
                 end,
          Bad = fun(Entry) -> {error, {bad_extra_mapping, Entry}} end,
-         [?_assertEqual({ok, [[<<"text/gemini">>, <<"gmi">>]]},
+         [?_assertEqual({ok, [{<<"text/gemini">>, [<<"gmi">>]}]},
                         With([{<<"gmi">>, <<"text/gemini">>}])),
           % in order
-          ?_assertEqual({ok, [[<<"text/b">>, <<"b">>],
-                              [<<"text/a">>, <<"a">>]]},
+          ?_assertEqual({ok, [{<<"text/b">>, [<<"b">>]},
+                              {<<"text/a">>, [<<"a">>]}]},
                         With([{<<"b">>, <<"text/b">>},
                               {<<"a">>, <<"text/a">>}])),
           ?_assertEqual({ok, []}, With([])),
@@ -494,9 +512,8 @@ additional_mappings_test_() ->
           ?_test(begin
                      application:set_env(mime_lookup, mime_types,
                                          [{<<"gmi">>, <<"text/gemini">>}]),
-                     ?assertEqual({ok, [[<<"text/html">>, <<"html">>],
-                                        [],
-                                        [<<"text/gemini">>, <<"gmi">>]]},
+                     ?assertEqual({ok, [{<<"text/html">>, [<<"html">>]},
+                                        {<<"text/gemini">>, [<<"gmi">>]}]},
                                   parse_mappings(<<"text/html html\n">>))
                  end),
           ?_test(begin
