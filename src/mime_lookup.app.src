@@ -16,7 +16,7 @@
     }]},
   {modules, [mime_lookup, mime_lookup_app, mime_lookup_sup, mime_lookup_serv]},
 
-  {licenses, ["Apache 2.0"]},
+  {licenses, ["Apache-2.0"]},
   {links, [{"GitHub", "https://github.com/mk270/mime_lookup"}]},
-  {exclude_files, []}
+  {include_paths, ["LICENCE"]}
  ]}.
