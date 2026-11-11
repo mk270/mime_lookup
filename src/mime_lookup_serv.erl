@@ -184,19 +184,24 @@ read_mappings() ->
     case application:get_env(mime_lookup, mime_types_path) of
         {ok, ConfigFile} ->
             case file:read_file(ConfigFile) of
-                {ok, Data} ->
-                    Lines = string:split(Data, <<"\n">>, all),
-                    Stripped = [ strip_comment(S) || S <- Lines ],
-                    Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
-                    Additional = application:get_env(mime_lookup,
-                                                     mime_types, []),
-                    {ok, Mappings ++ [ [V, K] || {K, V} <- Additional ]};
-                {error, Reason} ->
-                    {error, {cannot_read, ConfigFile, Reason}}
+                {ok, Data}      -> parse_mappings(Data);
+                {error, Reason} -> {error, {cannot_read, ConfigFile, Reason}}
             end;
         undefined ->
             {error, no_mime_types_path}
     end.
+
+
+-spec parse_mappings(Data) -> Result
+              when Data   :: binary(),
+                   Result :: {ok, [[any()]]}.
+parse_mappings(Data) ->
+    Lines = string:split(Data, <<"\n">>, all),
+    Stripped = [ strip_comment(S) || S <- Lines ],
+    Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
+    Additional = application:get_env(mime_lookup,
+                                     mime_types, []),
+    {ok, Mappings ++ [ [V, K] || {K, V} <- Additional ]}.
 
 
 -spec install(Mappings) -> Result
