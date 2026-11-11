@@ -17,7 +17,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3, format_status/2]).
+         terminate/2, code_change/3, format_status/1]).
 
 -define(SERVER, ?MODULE).
 
@@ -143,11 +143,10 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
--spec format_status(Opt, Status) -> Result
-              when Opt    :: normal | terminate,
-                   Status :: list(),
-                   Result :: term().
-format_status(_Opt, Status) ->
+-spec format_status(Status) -> Result
+              when Status :: gen_server:format_status(),
+                   Result :: gen_server:format_status().
+format_status(Status) ->
     Status.
 
 %%%===================================================================
