@@ -29,10 +29,11 @@
 lookup(MimeType) when is_binary(MimeType) ->
     gen_server:call(?SERVER, {lookup, MimeType}).
 
--spec start_link() -> {ok, Pid :: pid()} |
-                      {error, Error :: {already_started, pid()}} |
-                      {error, Error :: term()} |
-                      ignore.
+-spec start_link() -> Result
+              when Result :: {ok, Pid :: pid()}
+                           | {error, Error :: {already_started, pid()}}
+                           | {error, Error :: term()}
+                           | ignore.
 start_link() ->
     proc_lib:start_link(?MODULE, init, [[]]).
 
@@ -40,11 +41,13 @@ start_link() ->
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init(Args :: term()) -> {ok, State :: term()} |
-                              {ok, State :: term(), Timeout :: timeout()} |
-                              {ok, State :: term(), hibernate} |
-                              {stop, Reason :: term()} |
-                              ignore.
+-spec init(Args) -> Result
+              when Args   :: term(),
+                   Result :: {ok, State :: term()}
+                           | {ok, State :: term(), Timeout :: timeout()}
+                           | {ok, State :: term(), hibernate}
+                           | {stop, Reason :: term()}
+                           | ignore.
 init([]) ->
     % The server is ready when start_link/0 returns: the data is loaded and
     % the name is registered before this process says it has started, so
@@ -56,15 +59,22 @@ init([]) ->
     gen_server:enter_loop(?MODULE, [], #state{}).
 
 
--spec handle_call(Request :: term(), From :: {pid(), term()}, State :: term()) ->
-                         {reply, Reply :: term(), NewState :: term()} |
-                         {reply, Reply :: term(), NewState :: term(), Timeout :: timeout()} |
-                         {reply, Reply :: term(), NewState :: term(), hibernate} |
-                         {noreply, NewState :: term()} |
-                         {noreply, NewState :: term(), Timeout :: timeout()} |
-                         {noreply, NewState :: term(), hibernate} |
-                         {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
-                         {stop, Reason :: term(), NewState :: term()}.
+-spec handle_call(Request, From, State) -> Result
+              when Request :: term(),
+                   From    :: {pid(), term()},
+                   State   :: term(),
+                   Result  :: {reply, Reply :: term(), NewState :: term()}
+                            | {reply, Reply :: term(), NewState :: term(),
+                               Timeout :: timeout()}
+                            | {reply, Reply :: term(), NewState :: term(),
+                               hibernate}
+                            | {noreply, NewState :: term()}
+                            | {noreply, NewState :: term(),
+                               Timeout :: timeout()}
+                            | {noreply, NewState :: term(), hibernate}
+                            | {stop, Reason :: term(), Reply :: term(),
+                               NewState :: term()}
+                            | {stop, Reason :: term(), NewState :: term()}.
 handle_call({lookup, MimeType}, _From, State) ->
     Reply = case ets:lookup(?MODULE, MimeType) of
                 [] -> notfound;
@@ -73,39 +83,52 @@ handle_call({lookup, MimeType}, _From, State) ->
             end,
     {reply, Reply, State}.
 
--spec handle_cast(Request :: term(), State :: term()) ->
-                         {noreply, NewState :: term()} |
-                         {noreply, NewState :: term(), Timeout :: timeout()} |
-                         {noreply, NewState :: term(), hibernate} |
-                         {stop, Reason :: term(), NewState :: term()}.
+-spec handle_cast(Request, State) -> Result
+              when Request :: term(),
+                   State   :: term(),
+                   Result  :: {noreply, NewState :: term()}
+                            | {noreply, NewState :: term(),
+                               Timeout :: timeout()}
+                            | {noreply, NewState :: term(), hibernate}
+                            | {stop, Reason :: term(), NewState :: term()}.
 handle_cast(_Request, State) ->
     {noreply, State}.
 
--spec handle_info(Info :: timeout() | term(), State :: term()) ->
-                         {noreply, NewState :: term()} |
-                         {noreply, NewState :: term(), Timeout :: timeout()} |
-                         {noreply, NewState :: term(), hibernate} |
-                         {stop, Reason :: normal | term(), NewState :: term()}.
+-spec handle_info(Info, State) -> Result
+              when Info   :: timeout() | term(),
+                   State  :: term(),
+                   Result :: {noreply, NewState :: term()}
+                           | {noreply, NewState :: term(),
+                              Timeout :: timeout()}
+                           | {noreply, NewState :: term(), hibernate}
+                           | {stop, Reason :: normal | term(),
+                              NewState :: term()}.
 handle_info(reload, State) ->
     ok = load_data(),
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
--spec terminate(Reason :: normal | shutdown | {shutdown, term()} | term(),
-                State :: term()) -> any().
+-spec terminate(Reason, State) -> Result
+              when Reason :: normal | shutdown | {shutdown, term()} | term(),
+                   State  :: term(),
+                   Result :: any().
 terminate(_Reason, _State) ->
     ok.
 
--spec code_change(OldVsn :: term() | {down, term()},
-                  State :: term(),
-                  Extra :: term()) -> {ok, NewState :: term()} |
-                                      {error, Reason :: term()}.
+-spec code_change(OldVsn, State, Extra) -> Result
+              when OldVsn :: term() | {down, term()},
+                   State  :: term(),
+                   Extra  :: term(),
+                   Result :: {ok, NewState :: term()}
+                           | {error, Reason :: term()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
--spec format_status(Opt :: normal | terminate,
-                    Status :: list()) -> Status :: term().
+-spec format_status(Opt, Status) -> Result
+              when Opt    :: normal | terminate,
+                   Status :: list(),
+                   Result :: term().
 format_status(_Opt, Status) ->
     Status.
 

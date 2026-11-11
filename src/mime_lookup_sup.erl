@@ -17,21 +17,23 @@
 
 -define(SERVER, ?MODULE).
 
--spec start_link() -> {ok, Pid :: pid()} |
-                      {error, {already_started, Pid :: pid()}} |
-                      {error, {shutdown, term()}} |
-                      {error, term()} |
-                      ignore.
+-spec start_link() -> Result
+              when Result :: {ok, Pid :: pid()}
+                           | {error, {already_started, Pid :: pid()}}
+                           | {error, {shutdown, term()}}
+                           | {error, term()}
+                           | ignore.
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
--spec init(Args :: term()) ->
-                  {ok, {SupFlags :: supervisor:sup_flags(),
-                        [ChildSpec :: supervisor:child_spec()]}} |
-                  ignore.
+-spec init(Args) -> Result
+              when Args   :: term(),
+                   Result :: {ok, {SupFlags :: supervisor:sup_flags(),
+                                   [ChildSpec :: supervisor:child_spec()]}}
+                           | ignore.
 init([]) ->
 
     SupFlags = #{strategy => one_for_one,
