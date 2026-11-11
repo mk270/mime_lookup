@@ -1,6 +1,6 @@
 {application, mime_lookup,
  [{description, "MIME types lookup service"},
-  {vsn, "0.3.1"},
+  {vsn, "0.3.2"},
   {registered, [mime_lookup_sup, mime_lookup_serv]},
   {mod, {mime_lookup_app, []}},
   {applications,
