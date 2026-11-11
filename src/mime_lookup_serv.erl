@@ -32,6 +32,7 @@
 lookup(MimeType) when is_binary(MimeType) ->
     gen_server:call(?SERVER, {lookup, MimeType}).
 
+
 -spec start_link() -> Result
               when Result :: {ok, Pid :: pid()}
                            | {error, Error :: {already_started, pid()}}
@@ -86,6 +87,7 @@ handle_call({lookup, MimeType}, _From, State) ->
             end,
     {reply, Reply, State}.
 
+
 -spec handle_cast(Request, State) -> Result
               when Request :: term(),
                    State   :: term(),
@@ -96,6 +98,7 @@ handle_call({lookup, MimeType}, _From, State) ->
                             | {stop, Reason :: term(), NewState :: term()}.
 handle_cast(_Request, State) ->
     {noreply, State}.
+
 
 -spec handle_info(Info, State) -> Result
               when Info   :: timeout() | term(),
@@ -112,12 +115,14 @@ handle_info(reload, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
+
 -spec terminate(Reason, State) -> Result
               when Reason :: normal | shutdown | {shutdown, term()} | term(),
                    State  :: term(),
                    Result :: any().
 terminate(_Reason, _State) ->
     ok.
+
 
 -spec code_change(OldVsn, State, Extra) -> Result
               when OldVsn :: term() | {down, term()},
@@ -127,6 +132,7 @@ terminate(_Reason, _State) ->
                            | {error, Reason :: term()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
 
 -spec format_status(Opt, Status) -> Result
               when Opt    :: normal | terminate,
@@ -145,6 +151,7 @@ load_data() ->
     {ok, ConfigFile} = application:get_env(mime_lookup, mime_types_path),
     {ok, Data} = file:read_file(ConfigFile),
     ok = load_data(Data).
+
 
 -spec load_data(Data) -> Result
               when Data   :: binary(),
