@@ -5,6 +5,8 @@
 %% This programme is free software; you may redistribute and/or modify it under
 %% the terms of the Apache Software Licence v2.0.
 
+%% @doc Top-level supervisor: one permanent child, the lookup server.
+%% @private
 -module(mime_lookup_sup).
 
 -behaviour(supervisor).

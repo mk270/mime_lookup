@@ -5,6 +5,8 @@
 %% This programme is free software; you may redistribute and/or modify it under
 %% the terms of the Apache Software Licence v2.0.
 
+%% @doc Application callback module for `mime_lookup'.
+%% @private
 -module(mime_lookup_app).
 
 -behaviour(application).
