@@ -194,14 +194,47 @@ read_mappings() ->
 
 -spec parse_mappings(Data) -> Result
               when Data   :: binary(),
-                   Result :: {ok, [[any()]]}.
+                   Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
 parse_mappings(Data) ->
     Lines = string:split(Data, <<"\n">>, all),
     Stripped = [ strip_comment(S) || S <- Lines ],
     Mappings = [ line_to_mapping(S2) || S2 <- Stripped ],
-    Additional = application:get_env(mime_lookup,
-                                     mime_types, []),
-    {ok, Mappings ++ [ [V, K] || {K, V} <- Additional ]}.
+    case additional_mappings() of
+        {ok, Additional} -> {ok, Mappings ++ Additional};
+        {error, _} = Error -> Error
+    end.
+
+
+% The extra mappings in the application's environment (the `mime_types`
+% key: a list of {Extension, MimeType} pairs), as [MimeType, Extension]
+% lists, which is the shape of a line of the data file. Each extension
+% and MIME type must be a non-empty binary, and the value a proper list;
+% anything else is an error, not silently dropped or stored, since a
+% mapping with the wrong types could never be found.
+-spec additional_mappings() -> Result
+              when Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+additional_mappings() ->
+    case application:get_env(mime_lookup, mime_types, []) of
+        Pairs when is_list(Pairs) -> extra_mappings(Pairs, []);
+        Other -> {error, {bad_mime_types, Other}}
+    end.
+
+
+-spec extra_mappings(Pairs, Acc) -> Result
+              when Pairs  :: term(),
+                   Acc    :: [[binary()]],
+                   Result :: {ok, [[binary()]]} | {error, Reason :: term()}.
+extra_mappings([], Acc) ->
+    {ok, lists:reverse(Acc)};
+extra_mappings([{Extension, MimeType} | Rest], Acc)
+  when is_binary(Extension), Extension =/= <<>>,
+       is_binary(MimeType), MimeType =/= <<>> ->
+    extra_mappings(Rest, [[MimeType, Extension] | Acc]);
+extra_mappings([Bad | _Rest], _Acc) ->
+    {error, {bad_extra_mapping, Bad}};
+extra_mappings(Other, _Acc) ->
+    % the tail of an improper list
+    {error, {bad_mime_types, Other}}.
 
 
 -spec strip_comment(Line) -> Result
@@ -234,6 +267,9 @@ install(Mappings) ->
     ok.
 
 
+-spec store_mapping(Mapping) -> Result
+              when Mapping :: [binary()],
+                   Result  :: ok.
 store_mapping([]) -> ok; %ignored
 store_mapping([_Key]) -> ok; %ignored
 store_mapping([Key|Values]) ->
@@ -378,6 +414,14 @@ reload_steps({Path, _OldPath, Pid}) ->
     ?assertEqual({error, no_mime_types_path}, reload()),
     ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
     application:set_env(mime_lookup, mime_types_path, Path),
+    % as do extra mappings of the wrong type
+    OldExtra = application:get_env(mime_lookup, mime_types),
+    application:set_env(mime_lookup, mime_types, [{"gmi", "text/gemini"}]),
+    ?assertMatch({error, {bad_extra_mapping, _}}, reload()),
+    ?assertEqual({ok, <<"text/plain">>}, lookup(<<"txt">>)),
+    ?assertEqual({ok, <<"text/gemini">>}, lookup(<<"gemini">>)),
+    {ok, OldExtraValue} = OldExtra,
+    application:set_env(mime_lookup, mime_types, OldExtraValue),
     % the plain message does the same job, and lookups sent after it see
     % the result
     Write(<<"text/plain txt\ntext/x-new newext\n">>),
@@ -387,3 +431,83 @@ reload_steps({Path, _OldPath, Pid}) ->
     [ ?assertEqual(ok, reload()) || _ <- lists:seq(1, 25) ],
     ?assertEqual(Pid, whereis(?SERVER)),
     ?assert(is_process_alive(Pid)).
+
+%% additional_mappings/0 and what parse_mappings/1 does with it: the
+%% extra mappings come out in the shape of a line of the data file, and
+%% anything of the wrong type is an error.
+additional_mappings_test_() ->
+    {setup,
+     fun() ->
+         _ = application:load(mime_lookup),
+         application:get_env(mime_lookup, mime_types)
+     end,
+     fun(Old) ->
+         case Old of
+             {ok, Value} -> application:set_env(mime_lookup,
+                                                mime_types, Value);
+             undefined -> application:unset_env(mime_lookup, mime_types)
+         end
+     end,
+     fun(_) ->
+         With = fun(Env) ->
+                    application:set_env(mime_lookup, mime_types, Env),
+                    additional_mappings()
+                end,
+         Bad = fun(Entry) -> {error, {bad_extra_mapping, Entry}} end,
+         [?_assertEqual({ok, [[<<"text/gemini">>, <<"gmi">>]]},
+                        With([{<<"gmi">>, <<"text/gemini">>}])),
+          % in order
+          ?_assertEqual({ok, [[<<"text/b">>, <<"b">>],
+                              [<<"text/a">>, <<"a">>]]},
+                        With([{<<"b">>, <<"text/b">>},
+                              {<<"a">>, <<"text/a">>}])),
+          ?_assertEqual({ok, []}, With([])),
+          ?_test(begin
+                     application:unset_env(mime_lookup, mime_types),
+                     ?assertEqual({ok, []}, additional_mappings())
+                 end),
+          % the wrong types are refused, not stored or dropped
+          ?_assertEqual(Bad({"gmi", "text/gemini"}),
+                        With([{"gmi", "text/gemini"}])),
+          ?_assertEqual(Bad({<<"gmi">>, text}),
+                        With([{<<"gmi">>, text}])),
+          ?_assertEqual(Bad({gmi, <<"text/gemini">>}),
+                        With([{gmi, <<"text/gemini">>}])),
+          ?_assertEqual(Bad({<<"gmi">>, <<"text/gemini">>, extra}),
+                        With([{<<"gmi">>, <<"text/gemini">>, extra}])),
+          ?_assertEqual(Bad(<<"gmi">>), With([<<"gmi">>])),
+          ?_assertEqual(Bad({<<>>, <<"text/gemini">>}),
+                        With([{<<>>, <<"text/gemini">>}])),
+          ?_assertEqual(Bad({<<"gmi">>, <<>>}), With([{<<"gmi">>, <<>>}])),
+          % the first bad entry is the one reported, wherever it is
+          ?_assertEqual(Bad(oops),
+                        With([{<<"a">>, <<"text/a">>}, oops,
+                              {<<"b">>, <<"text/b">>}])),
+          % the value as a whole must be a list
+          ?_assertEqual({error, {bad_mime_types, gmi}}, With(gmi)),
+          ?_assertEqual({error, {bad_mime_types, {<<"a">>, <<"b">>}}},
+                        With({<<"a">>, <<"b">>})),
+          ?_assertEqual({error, {bad_mime_types, tail}},
+                        With(improper_list({<<"a">>, <<"text/a">>}, tail))),
+          % and parse_mappings/1 adds them to the file's, or passes the
+          % error on
+          ?_test(begin
+                     application:set_env(mime_lookup, mime_types,
+                                         [{<<"gmi">>, <<"text/gemini">>}]),
+                     ?assertEqual({ok, [[<<"text/html">>, <<"html">>],
+                                        [],
+                                        [<<"text/gemini">>, <<"gmi">>]]},
+                                  parse_mappings(<<"text/html html\n">>))
+                 end),
+          ?_test(begin
+                     application:set_env(mime_lookup, mime_types, [oops]),
+                     ?assertEqual(Bad(oops),
+                                  parse_mappings(<<"text/html html\n">>))
+                 end)]
+     end}.
+
+% An improper list, on purpose: the test needs one, and dialyzer is told
+% that this function is allowed to make it.
+-dialyzer({no_improper_lists, improper_list/2}).
+improper_list(Head, Tail) ->
+    [Head | Tail].
