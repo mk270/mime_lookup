@@ -45,13 +45,11 @@ start_link() ->
 %%% gen_server callbacks
 %%%===================================================================
 
+% Not the usual gen_server callback: start_link/0 runs this directly under
+% proc_lib, and it enters the server loop rather than returning.
 -spec init(Args) -> Result
-              when Args   :: term(),
-                   Result :: {ok, State :: term()}
-                           | {ok, State :: term(), Timeout :: timeout()}
-                           | {ok, State :: term(), hibernate}
-                           | {stop, Reason :: term()}
-                           | ignore.
+              when Args   :: [],
+                   Result :: no_return().
 init([]) ->
     % The server is ready when start_link/0 returns: the data is loaded and
     % the name is registered before this process says it has started, so
