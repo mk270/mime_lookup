@@ -24,7 +24,7 @@ read when the application starts, and again whenever you call
 Add it to your `rebar.config`:
 
 ```erlang
-{deps, [{mime_lookup, "~> 0.4"}]}.
+{deps, [{mime_lookup, "~> 0.5"}]}.
 ```
 
 and list `mime_lookup` among the `applications` of your own application
