@@ -5,18 +5,8 @@
 %% This programme is free software; you may redistribute and/or modify it under
 %% the terms of the Apache Software Licence v2.0.
 
-%% @doc The server that owns the MIME type table.
-%%
-%% It is started by `mime_lookup_sup' and is not meant to be called
-%% directly: use the {@link mime_lookup} module. Every lookup is a call
-%% to this process, which is also the only one to write the ETS table,
-%% so a reload cannot be seen half-done.
-%%
-%% Besides the `reload' call, the server accepts a plain `reload'
-%% message (`Pid ! reload'), which does the same but only logs a
-%% warning on failure.
-%% @private
 -module(mime_lookup_serv).
+-moduledoc false.
 -include_lib("eunit/include/eunit.hrl").
 -behaviour(gen_server).
 

@@ -140,12 +140,14 @@ back, with the reason (such as `{cannot_read, File, enoent}`, inside a
 $ rebar3 compile
 $ rebar3 eunit
 $ rebar3 dialyzer
-$ rebar3 edoc
+$ rebar3 ex_doc
 ```
 
-`rebar3 edoc` writes the API documentation to `doc/`. The `{hex, [{doc,
-edoc}]}` entry in `rebar.config` makes `rebar3 hex publish` build and
-publish it with the package.
+`rebar3 ex_doc` writes the API documentation to `doc/`. It needs OTP 27
+or later, since the docs are written with `-moduledoc` and `-doc`
+attributes. The `{hex, [{doc, #{provider => ex_doc}}]}` entry in
+`rebar.config` makes `rebar3 hex publish` build and publish it with the
+package.
 
 ## Licence
 
